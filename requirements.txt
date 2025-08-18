@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+motor
+pymongo
+pydantic
+python-dotenv
+openpyxl
+requests
+typing
+pyjwt
+passlib[bcrypt]
+python-multipart
+pandas
+pdfkit
+httpx

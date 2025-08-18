@@ -704,7 +704,8 @@ async def get_invoices(
 
 @app.get("/api/invoices/metrics")
 async def get_invoice_metrics(year: Optional[int] = None, user=Depends(get_current_user)):
-    query = {"user": ObjectId(user["_id"])}
+    query = {}
+    query ["user"]= ObjectId(user["_id"])
     if year:
         start_date = datetime(year, 1, 1)
         end_date = datetime(year, 12, 31, 23, 59, 59)
@@ -1351,15 +1352,15 @@ async def login(data: dict):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = jwt.encode({"_id": str(user["_id"]), "email": user["email"]}, SECRET_KEY, algorithm="HS256")
     
-    response.set_cookie(
-        key="authToken",
-        value=token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=86400,
-        path="/"
-    )
+    # response.set_cookie(
+    #     key="authToken",
+    #     value=token,
+    #     httponly=True,
+    #     secure=True,
+    #     samesite="none",
+    #     max_age=86400,
+    #     path="/"
+    # )
     return {"token": token}
 
 @app.post("/api/register")
@@ -2378,7 +2379,8 @@ async def get_tax_summary(user=Depends(get_current_user)):
 
 @app.get("/api/team/members") 
 async def get_team_members(search: Optional[str] = None, page: int = 1, limit: int = 10, status: Optional[TeamMemberStatus] = None, role: Optional[TeamMemberRole] = None, user=Depends(get_current_user)):
-    query = {"userId": ObjectId(user["_id"])}
+    query = {}
+    query ["userId"] = ObjectId(user["_id"])
     if search:
         query["$or"] = [
             {"name": {"$regex": search, "$options": "i"}},
@@ -2496,6 +2498,8 @@ async def delete_team_member(id: str, user=Depends(get_current_user)):
 
 @app.post("/api/team/members/import")
 async def import_team_members(file: UploadFile = File(...), user=Depends(get_current_user)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
     if not file.filename.endswith(('.csv', '.xlsx')):
         raise HTTPException(status_code=400, detail="Only CSV and Excel files are supported")
     
@@ -2596,6 +2600,8 @@ async def change_password(data: dict = Body(...), user=Depends(get_current_user)
     new_password = data.get("newPassword")
 
     user_doc = await db["users"].find_one({"_id": ObjectId(user["_id"])})
+    if not current_password:
+        raise HTTPException(status_code=500, detail="No password provided for verification")
     if not user_doc or not pwd_context.verify(current_password, user_doc["password"]):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
 
@@ -2612,6 +2618,8 @@ async def change_password(data: dict = Body(...), user=Depends(get_current_user)
 
 @app.post("/api/profile/upload")
 async def upload_logo(file: UploadFile = File(...), user=Depends(get_current_user)):
+    if not file.content_type:
+        raise HTTPException(status_code=400, detail="No file provided.")
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Only image files are allowed.")
     
