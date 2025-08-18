@@ -1,0 +1,5 @@
+compose.yaml
+Dockerfile
+.env
+mn.py
+.dockerignore
