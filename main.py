@@ -126,6 +126,46 @@ class ExpenseInvoice(BaseModel):
     igst: Optional[float]
     total: Optional[float]
 
+class ExpenseStep1(BaseModel):
+    expenseNumber: str = Field(..., alias="expenseNumber")
+    expenseDate: datetime = Field(..., alias="expenseDate")
+    dueDate: Optional[datetime]
+    currency: Optional[str] = "INR"
+    status: Optional[str] = "draft"
+    notes: Optional[str]
+    paymentMethod: Optional[str]
+
+class ExpenseStep2(BaseModel):
+    vendorName: str
+    businessName: Optional[str]
+    billingAddress: str
+    shippingAddress: Optional[str]
+    email: Optional[str]
+
+class ExpenseItemFromStep3(BaseModel):
+    id: Union[int, str]
+    name: str
+    hsn: Optional[str]
+    qty: int
+    price: float
+
+class ExpenseStep3(BaseModel):
+    items: List[ExpenseItemFromStep3]
+
+class ExpenseStep4(BaseModel):
+    cgst: Optional[float] = 0
+    sgst: Optional[float] = 0
+    igst: Optional[float] = 0
+    discount: Optional[float] = 0
+    shipping: Optional[float] = 0
+
+class NewExpenseFromSteps(BaseModel):
+    step1: ExpenseStep1
+    step2: ExpenseStep2
+    step3: ExpenseStep3
+    step4: ExpenseStep4
+
+
 class User(BaseModel):
     email: str
     password: str
@@ -150,48 +190,25 @@ class Address(BaseModel):
     pincode: str
     country: str
 
-class CustomerStep1(BaseModel):
+class Customers(BaseModel):
     customerType: str
     fullName: str
     email: str
     phone: str
     companyName: Optional[str] = None
     website: Optional[str] = None
-
-class CustomerStep2(BaseModel):
     billingAddress: Address
     shippingAddress: Address
     sameAsBilling: bool
-
-class CustomerStep3(BaseModel):
     panNumber: Optional[str] = None
     isGstRegistered: bool
     gstNumber: Optional[str] = None
     placeOfSupply: str
     currency: str
     paymentTerms: str
-
-class CustomerStep4(BaseModel):
     notes: Optional[str] = None
     tags: List[str]
 
-class NewCustomer(BaseModel):
-    step1: CustomerStep1
-    step2: CustomerStep2
-    step3: CustomerStep3
-    step4: CustomerStep4
-
-class Customer(BaseModel):
-    id: str
-    name: str
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    address: Optional[str] = None
-    logo: Optional[str] = None
-    status: Optional[str] = "active"
-    lastInvoice: Optional[datetime] = None
-    balance: Optional[float] = 0.0
-    createdAt: Optional[datetime] = None
 
 class TeamMemberRole(str, Enum):
     admin = "admin"
@@ -956,30 +973,75 @@ async def get_expense_metrics(user=Depends(get_current_user)):
         "overdueExpenses": overdue_expenses
     }
     
-@app.post("/api/expenses", status_code=status.HTTP_201_CREATED)
-async def create_expense(expense: ExpenseInvoice, user=Depends(get_current_user)):
-    expense_dict = expense.dict(exclude_unset=True)
-    expense_dict["userId"] = user["_id"]
-    result = await db["expenseinvoices"].insert_one(expense_dict)
-    created_expense = await db["expenseinvoices"].find_one({"_id": result.inserted_id})
-    if not created_expense:
-        raise HTTPException(status_code=500, detail="Could not create expense.")
-    return convert_objids(created_expense)
+
 
 @app.post("/api/expenses", status_code=status.HTTP_201_CREATED)
-async def create_expense_from_steps(expense_data: ExpenseSteps, user=Depends(get_current_user)):
+async def create_expense_from_steps(expense_data: NewExpenseFromSteps, user=Depends(get_current_user)):
     try:
-        doc = expense_data.dict()
-        doc["userId"] = user["_id"]
-        doc["createdAt"] = datetime.utcnow()
-        doc["updatedAt"] = datetime.utcnow()
+        step1 = expense_data.step1
+        step2 = expense_data.step2
+        step3 = expense_data.step3
+        step4 = expense_data.step4
+
+        transformed_items = []
+        subtotal = 0.0
+        for item in step3.items:
+            item_total = item.qty * item.price
+            subtotal += item_total
+            transformed_items.append({
+                "description": item.name,
+                "hsn": item.hsn,
+                "quantity": item.qty,
+                "price": item.price,
+                "total": item_total,
+            })
         
-        result = await db["expenseinvoices"].insert_one(doc)
-        created = await db["expenseinvoices"].find_one({"_id": result.inserted_id})
+        if step4.shipping and step4.shipping > 0:
+            transformed_items.append({
+                "description": "Shipping Charges",
+                "quantity": 1,
+                "price": step4.shipping,
+                "total": step4.shipping
+            })
+
+        total_after_discount = (subtotal + (step4.shipping or 0)) - (step4.discount or 0)
+        final_total = total_after_discount + (step4.cgst or 0) + (step4.sgst or 0) + (step4.igst or 0)
         
-        return {"success": True, "data": convert_objids(created), "_id": str(result.inserted_id)}
+        expense_doc = {
+            "userId": user["_id"],
+            "invoiceNumber": step1.expenseNumber,
+            "date": step1.expenseDate,
+            "dueDate": step1.dueDate,
+            "currency": step1.currency,
+            "status": step1.status,
+            "notes": step1.notes,
+            "paymentMethod": step1.paymentMethod,
+            "billFrom": {
+                "name": step2.vendorName,
+                "address": step2.billingAddress,
+                "email": step2.email
+            },
+            "shipTo": {
+                "address": step2.shippingAddress
+            },
+            "items": transformed_items,
+            "subtotal": subtotal,
+            "discount": step4.discount,
+            "shipping": step4.shipping,
+            "cgst": step4.cgst,
+            "sgst": step4.sgst,
+            "igst": step4.igst,
+            "total": final_total,
+            "createdAt": datetime.utcnow()
+        }
+
+        result = await db["expenseinvoices"].insert_one(expense_doc)
+        created_expense = await db["expenseinvoices"].find_one({"_id": result.inserted_id})
+
+        return convert_objids(created_expense)
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to create expense: {str(e)}")
 
 @app.post("/api/invoices/{invoice_id}/duplicate")
 async def duplicate_invoice(invoice_id: str, user=Depends(get_current_user)):
@@ -1475,32 +1537,53 @@ async def register(user: User):
     return {"success": True, "userId": str(result.inserted_id)}
 
 
+
+class CustomerCreateRequest(BaseModel):
+    customerType: str
+    fullName: str
+    email: Optional[str] = ""
+    phone: Optional[str] = ""
+    companyName: Optional[str] = ""
+    website: Optional[str] = ""
+    billingAddress: Optional[str] = ""
+    billingCity: Optional[str] = ""
+    billingState: Optional[str] = ""
+    billingZip: Optional[str] = ""
+    shippingAddress: Optional[str] = ""
+    shippingCity: Optional[str] = ""
+    shippingState: Optional[str] = ""
+    shippingZip: Optional[str] = ""
+    pan: Optional[str] = ""
+    documents: Optional[List[str]] = []
+    gstRegistered: Optional[str] = ""
+    gstNumber: Optional[str] = ""
+    supplyPlace: Optional[str] = ""
+    currency: Optional[str] = ""
+    paymentTerms: Optional[str] = ""
+    logo: Optional[str] = None
+    notes: Optional[str] = ""
+    tags: Optional[str] = ""
+    name: Optional[str] = ""
+    billingAddressLine1: Optional[str] = ""
+    billingCountry: Optional[str] = ""
+    billingAddressLine2: Optional[str] = ""
+    shippingAddressLine1: Optional[str] = ""
+    shippingCountry: Optional[str] = ""
+    shippingAddressLine2: Optional[str] = ""
+
 @app.post("/api/customers", status_code=status.HTTP_201_CREATED)
-async def add_customer(customer: NewCustomer, user=Depends(get_current_user)):
+async def add_customer(customer: CustomerCreateRequest, user=Depends(get_current_user)):
     try:
         customer_data = customer.dict()
-        
-        flattened_data = {
-            **customer_data['step1'],
-            'billingAddress': customer_data['step2']['billingAddress'],
-            'shippingAddress': customer_data['step2']['shippingAddress'],
-            'sameAsBilling': customer_data['step2']['sameAsBilling'],
-            **customer_data['step3'],
-            **customer_data['step4'],
-            'userId': ObjectId(user["_id"]),
-            'createdAt': datetime.utcnow(),
-            'status': 'active',
-            'balance': 0.0,
-            'lastInvoice': None,
-            'logo': None
-        }
-        
-        if not flattened_data.get('companyName'):
-            flattened_data['companyName'] = flattened_data['fullName']
-
-        result = await db["customers"].insert_one(flattened_data)
+        customer_data['userId'] = ObjectId(user["_id"])
+        customer_data['createdAt'] = datetime.utcnow()
+        customer_data['status'] = 'active'
+        customer_data['balance'] = 0.0
+        customer_data['lastInvoice'] = None
+        if not customer_data.get('companyName'):
+            customer_data['companyName'] = customer_data.get('fullName', "")
+        result = await db["customers"].insert_one(customer_data)
         created_customer = await db["customers"].find_one({"_id": result.inserted_id})
-        
         return {"success": True, "customer": convert_objids(created_customer)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding customer: {str(e)}")
