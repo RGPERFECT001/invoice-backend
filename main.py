@@ -211,8 +211,14 @@ class TeamMemberBase(BaseModel):
     phone: str
     status: TeamMemberStatus
 
+class TeamMemberCredentials(BaseModel):
+    username: str
+    password: str
+
 class TeamMemberCreate(TeamMemberBase):
     joiningDate: date
+    credentials: TeamMemberCredentials
+
 
 class TeamMemberUpdate(BaseModel):
     name: Optional[str] = None
@@ -1365,11 +1371,11 @@ async def login(data: dict):
 
 @app.post("/api/register")
 async def register(user: User):
-    user.email = user.email.lower()
-    
-    existing = await db["users"].find_one({"email": user.email})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+    if user.email:
+        user.email = user.email.lower()
+        existing = await db["users"].find_one({"email": user.email})
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already registered")
 
     password = user.password
     if not password:
@@ -1387,6 +1393,7 @@ async def register(user: User):
     user_dict["createdAt"] = datetime.utcnow()
     result = await db["users"].insert_one(user_dict)
     return {"success": True, "userId": str(result.inserted_id)}
+
 
 @app.post("/api/customers", status_code=status.HTTP_201_CREATED)
 async def add_customer(customer: NewCustomer, user=Depends(get_current_user)):
@@ -1421,7 +1428,7 @@ async def add_customer(customer: NewCustomer, user=Depends(get_current_user)):
 @app.get("/api/get_customer")
 async def get_customer_pages(
     page: int = Query(1, alias="page"),
-    perPage: int = Query(10, alias="perPage"),
+    perPage: int = Query(10, alias="limit"),
     user=Depends(get_current_user)
 ):
     try:
@@ -2096,8 +2103,8 @@ async def send_otp_register(data: dict = Body(...)):
         return {'message': 'Error Sending OTP'}
     name = data.get("name")
     website = data.get("website")
-    if not all([phonenumber, email, password, name, website]):
-        raise HTTPException(status_code=400, detail="All fields required")
+    if not all([phonenumber, password, email, name]):
+        raise HTTPException(status_code=400, detail="Phone number, email, password and name are required")
     otp = str(random.randint(100000, 999999))
     otp_expiration = datetime.utcnow() + timedelta(minutes=10)
     await db["pendinguser"].delete_many({"phonenumber": phonenumber})
@@ -2224,42 +2231,42 @@ async def send_otp_helper(phonenumber: str, otp: str, db, api_key: str):
     except Exception as err:
         raise HTTPException(status_code=500, detail={"message": "Internal server error", "error": str(err)})
 
-@app.get("/api/get_customer")
-async def get_customers(page: int = 1, limit: int = 10, user=Depends(get_current_user)):
-    skip = (page - 1) * limit
-    query = {"userId": ObjectId(user["_id"])}
-    total_customers = await db.customers.count_documents(query)
-    customers_cursor = db.customers.find(query).sort("createdAt", -1).skip(skip).limit(limit)
-    customers = await customers_cursor.to_list(limit)
+# @app.get("/api/get_customer")
+# async def get_customers(page: int = 1, limit: int = 10, user=Depends(get_current_user)):
+#     skip = (page - 1) * limit
+#     query = {"userId": ObjectId(user["_id"])}
+#     total_customers = await db.customers.count_documents(query)
+#     customers_cursor = db.customers.find(query).sort("createdAt", -1).skip(skip).limit(limit)
+#     customers = await customers_cursor.to_list(limit)
 
-    response_data = []
-    for customer in customers:
-        response_data.append({
-            "id": str(customer["_id"]),
-            "company": {
-                "name": customer.get("companyName"),
-                "email": customer.get("email"),
-                "logo": customer.get("logo")
-            },
-            "customer": {
-                "name": customer.get("fullName"),
-                "avatar": customer.get("logo") or "/avatars/user_default.png"
-            },
-            "phone": customer.get("phone"),
-            "status": customer.get("status", "Active"),
-            "lastInvoice": customer.get("lastInvoice").strftime("%Y-%m-%d") if customer.get("lastInvoice") else None,
-            "balance": customer.get('balance', 0.0)
-        })
+#     response_data = []
+#     for customer in customers:
+#         response_data.append({
+#             "id": str(customer["_id"]),
+#             "company": {
+#                 "name": customer.get("companyName"),
+#                 "email": customer.get("email"),
+#                 "logo": customer.get("logo")
+#             },
+#             "customer": {
+#                 "name": customer.get("fullName"),
+#                 "avatar": customer.get("logo") or "/avatars/user_default.png"
+#             },
+#             "phone": customer.get("phone"),
+#             "status": customer.get("status", "Active"),
+#             "lastInvoice": customer.get("lastInvoice").strftime("%Y-%m-%d") if customer.get("lastInvoice") else None,
+#             "balance": customer.get('balance', 0.0)
+#         })
     
-    return {
-        "data": response_data,
-        "pagination": {
-            "total": total_customers,
-            "perPage": limit,
-            "currentPage": page,
-            "totalPages": (total_customers + limit - 1) // limit if limit > 0 else 0
-        }
-    }
+#     return {
+#         "data": response_data,
+#         "pagination": {
+#             "total": total_customers,
+#             "perPage": limit,
+#             "currentPage": page,
+#             "totalPages": (total_customers + limit - 1) // limit if limit > 0 else 0
+#         }
+#     }
 
 @app.get("/api/expenses")
 async def get_expenses(user=Depends(get_current_user)):
@@ -2377,7 +2384,7 @@ async def get_tax_summary(user=Depends(get_current_user)):
     
     return result
 
-@app.get("/api/team/members") 
+@app.get("/api/team-members") 
 async def get_team_members(search: Optional[str] = None, page: int = 1, limit: int = 10, status: Optional[TeamMemberStatus] = None, role: Optional[TeamMemberRole] = None, user=Depends(get_current_user)):
     query = {}
     query ["userId"] = ObjectId(user["_id"])
@@ -2426,8 +2433,10 @@ async def get_team_members(search: Optional[str] = None, page: int = 1, limit: i
         }
     }
 
-@app.post("/api/team/members") 
+@app.post("/api/team-members") 
 async def add_team_member(member_data: TeamMemberCreate, user=Depends(get_current_user)):
+    hashed_password = pwd_context.hash(member_data.credentials.password)
+    
     member_doc = {
         "name": member_data.name,
         "role": member_data.role.value,
@@ -2437,7 +2446,9 @@ async def add_team_member(member_data: TeamMemberCreate, user=Depends(get_curren
         "joiningDate": datetime.combine(member_data.joiningDate, datetime.min.time()),
         "userId": ObjectId(user["_id"]), 
         "lastActive": None,
-        "avatar": f"/uploads/{member_data.name.split(' ')[0].lower()}.png"
+        "avatar": f"/uploads/{member_data.name.split(' ')[0].lower()}.png",
+        "username": member_data.credentials.username,
+        "password": hashed_password
     }
 
     result = await db.teammembers.insert_one(member_doc)
@@ -2456,7 +2467,8 @@ async def add_team_member(member_data: TeamMemberCreate, user=Depends(get_curren
             "dateJoined": date_joined_str,
             "lastActive": None,
             "status": member.get("status", "").capitalize(),
-            "avatar": member.get("avatar")
+            "avatar": member.get("avatar"),
+            "username": member.get("username")
         }
 
     return {
@@ -2465,7 +2477,8 @@ async def add_team_member(member_data: TeamMemberCreate, user=Depends(get_curren
         "data": format_created(created_member)
     }
 
-@app.put("/api/team/members/{id}")
+
+@app.put("/api/team-members/{id}")
 async def update_team_member(id: str, member_update: TeamMemberUpdate, user=Depends(get_current_user)):
     update_data = member_update.dict(exclude_unset=True)
     if not update_data:
@@ -2485,7 +2498,7 @@ async def update_team_member(id: str, member_update: TeamMemberUpdate, user=Depe
         "data": convert_objids(updated_member)
     }
 
-@app.delete("/api/team/members/{id}")
+@app.delete("/api/team-members/{id}")
 async def delete_team_member(id: str, user=Depends(get_current_user)):
     try:
         obj_id = ObjectId(id)
@@ -2496,7 +2509,7 @@ async def delete_team_member(id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Team member not found")
     return {"success": True, "message": "Team member deleted successfully"}
 
-@app.post("/api/team/members/import")
+@app.post("/api/team-members/import")
 async def import_team_members(file: UploadFile = File(...), user=Depends(get_current_user)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -2520,7 +2533,7 @@ async def import_team_members(file: UploadFile = File(...), user=Depends(get_cur
     
     return {"success": True, "message": f"{imported_count} team members imported successfully"}
 
-@app.get("/api/team/members/export")
+@app.get("/api/team-members/export")
 async def export_team_members(format: str, user=Depends(get_current_user)):
     members = await db.teammembers.find({"userId": ObjectId(user["_id"])}).to_list(None) # CORRECTED: Query by ObjectId
     if not members:
