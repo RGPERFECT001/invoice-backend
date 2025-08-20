@@ -262,6 +262,49 @@ class ExpenseSteps(BaseModel):
     step3: dict
     step4: dict
 
+class BillToPayload(BaseModel):
+    name: str
+    email: Optional[str]
+    address: Optional[str]
+    state: Optional[str]
+    gst: Optional[str]
+    pan: Optional[str]
+    phone: Optional[str]
+    companyName: Optional[str]
+
+class BillFromPayload(BaseModel):
+    businessName: Optional[str]
+    address: Optional[str]
+    state: Optional[str]
+    phone: Optional[str]
+    email: Optional[str]
+    gst: Optional[str]
+
+class InvoiceItemPayload(BaseModel):
+    description: str
+    hsn: Optional[str]
+    quantity: int
+    unitPrice: float
+    gst: Optional[float] = 0
+    discount: Optional[float] = 0
+
+class NewInvoicePayload(BaseModel):
+    invoiceNumber: str
+    date: datetime
+    dueDate: Optional[datetime]
+    billTo: BillToPayload
+    shipTo: Optional[dict]
+    items: List[InvoiceItemPayload]
+    notes: Optional[str]
+    currency: Optional[str] = "INR"
+    status: Optional[str] = "draft"
+    termsAndConditions: Optional[str]
+    paymentTerms: Optional[str]
+    billFrom: Optional[BillFromPayload]
+    discount: Optional[float] = 0
+    shipping: Optional[float] = 0
+
+
 def convert_objids(obj):
         if isinstance(obj, dict):
             for k, v in obj.items():
@@ -685,12 +728,82 @@ def generate_invoice_html(invoice_data, user_profile):
     return html_template
 
 @app.post("/api/invoices", status_code=status.HTTP_201_CREATED)
-async def create_invoice(invoice: Invoice, user=Depends(get_current_user)):
-    invoice_dict = invoice.dict(exclude_unset=True)
-    invoice_dict["user"] = ObjectId(user["_id"])
-    result = await db["invoices"].insert_one(invoice_dict)
+async def create_invoice(payload: NewInvoicePayload, user=Depends(get_current_user)):
+    user_profile = await db["users"].find_one({"_id": ObjectId(user["_id"])})
+    if not user_profile:
+        raise HTTPException(status_code=404, detail="User profile not found")
+
+    user_state = user_profile.get("state")
+    customer_state = payload.billTo.state
+
+    subtotal = 0.0
+    total_cgst = 0.0
+    total_sgst = 0.0
+    total_igst = 0.0
+    transformed_items = []
+
+    for item in payload.items:
+        line_amount = item.quantity * item.unitPrice
+        discount_amount = line_amount * (item.discount / 100) if item.discount else 0
+        taxable_amount = line_amount - discount_amount
+        
+        gst_amount = taxable_amount * (item.gst / 100) if item.gst else 0
+
+        if user_state and customer_state and user_state.lower() == customer_state.lower():
+            total_cgst += gst_amount / 2
+            total_sgst += gst_amount / 2
+        else:
+            total_igst += gst_amount
+
+        transformed_items.append({
+            "description": item.description,
+            "hsn": item.hsn,
+            "quantity": item.quantity,
+            "unitPrice": item.unitPrice,
+            "gst": item.gst,
+            "discount": item.discount,
+            "amount": taxable_amount
+        })
+        subtotal += taxable_amount
+
+    total_tax = total_cgst + total_sgst + total_igst
+    final_total = (subtotal - (payload.discount or 0)) + (payload.shipping or 0) + total_tax
+
+    invoice_doc = {
+        "user": ObjectId(user["_id"]),
+        "invoiceNumber": payload.invoiceNumber,
+        "date": payload.date,
+        "dueDate": payload.dueDate,
+        "billTo": {
+            "name": payload.billTo.companyName or payload.billTo.name,
+            "email": payload.billTo.email,
+            "address": payload.billTo.address,
+            "state": payload.billTo.state,
+            "gst": payload.billTo.gst,
+            "pan": payload.billTo.pan,
+            "phone": payload.billTo.phone,
+        },
+        "shipTo": payload.shipTo,
+        "items": transformed_items,
+        "notes": payload.notes,
+        "currency": payload.currency,
+        "status": payload.status,
+        "subtotal": subtotal,
+        "discount": payload.discount,
+        "shipping": payload.shipping,
+        "cgst": round(total_cgst, 2),
+        "sgst": round(total_sgst, 2),
+        "igst": round(total_igst, 2),
+        "total": round(final_total, 2),
+        "termsAndConditions": payload.termsAndConditions,
+        "paymentTerms": payload.paymentTerms,
+        "createdAt": datetime.utcnow()
+    }
+
+    result = await db["invoices"].insert_one(invoice_doc)
     created_invoice = await db["invoices"].find_one({"_id": result.inserted_id})
-    return {"message": "Invoice created successfully", "invoice": convert_objids(created_invoice)}
+    
+    return convert_objids(created_invoice)
 
 @app.get("/api/invoices")
 async def get_invoices(
