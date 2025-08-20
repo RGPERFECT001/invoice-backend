@@ -876,6 +876,86 @@ async def get_expense_invoices(user=Depends(get_current_user)):
         }
     }
 
+@app.get("/api/expenses/metrics")
+async def get_expense_metrics(user=Depends(get_current_user)):
+    '''Expected Response -> {
+  "totalExpenses": { "amount": 50000, "trend": "up", "percentageChange": "11.11" },
+  "paidExpenses": { "amount": 30000, "trend": "up", "percentageChange": "20.00" },
+  "pendingExpenses": { "amount": 15000, "trend": "up", "percentageChange": "0.00" },
+  "overdueExpenses": { "amount": 5000, "trend": "up", "percentageChange": "0.00" }
+}'''
+    query = {"userId": user["_id"]}
+    total_expense_this_month = await db["expenseinvoices"].aggregate([
+        {"$match": {**query, "date": {"$gte": datetime.utcnow().replace(day=1, hour=0, minute=0, second=0)}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]).to_list(1)
+    total_expense_previous_month = await db["expenseinvoices"].aggregate([
+        {"$match": {**query, "date": {"$gte": (datetime.utcnow().replace(day=1, hour=0, minute=0, second=0) - timedelta(days=30))}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]).to_list(1)
+    total_expense_this_month = total_expense_this_month[0]["total"] if total_expense_this_month else 0
+    total_expense_previous_month = total_expense_previous_month[0]["total"] if total_expense_previous_month else 0
+    expense_trend = calculate_trend(total_expense_this_month, total_expense_previous_month)
+    total_expenses = {
+        "amount": total_expense_this_month,
+        "trend": expense_trend["trend"],
+        "percentageChange": str(expense_trend["change"])
+    }
+    paid_expenses_this_month = await db["expenseinvoices"].aggregate([
+        {"$match": {**query, "status": "paid", "date": {"$gte": datetime.utcnow().replace(day=1, hour=0, minute=0, second=0)}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]).to_list(1)
+    paid_expenses_previous_month = await db["expenseinvoices"].aggregate([
+        {"$match": {**query, "status": "paid", "date": {"$gte": (datetime.utcnow().replace(day=1, hour=0, minute=0, second=0) - timedelta(days=30))}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]).to_list(1)
+    paid_expenses_this_month = paid_expenses_this_month[0]["total"] if paid_expenses_this_month else 0
+    paid_expenses_previous_month = paid_expenses_previous_month[0]["total"] if paid_expenses_previous_month else 0
+    paid_expenses_trend = calculate_trend(paid_expenses_this_month, paid_expenses_previous_month)
+    paid_expenses = {
+        "amount": paid_expenses_this_month,
+        "trend": paid_expenses_trend["trend"],
+        "percentageChange": str(paid_expenses_trend["change"])
+    }
+    pending_expenses_this_month = await db["expenseinvoices"].aggregate([
+        {"$match": {**query, "status": "pending", "date": {"$gte": datetime.utcnow().replace(day=1, hour=0, minute=0, second=0)}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]).to_list(1)
+    pending_expenses_previous_month = await db["expenseinvoices"].aggregate([
+        {"$match": {**query, "status": "pending", "date": {"$gte": (datetime.utcnow().replace(day=1, hour=0, minute=0, second=0) - timedelta(days=30))}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]).to_list(1)
+    pending_expenses_this_month = pending_expenses_this_month[0]["total"] if pending_expenses_this_month else 0
+    pending_expenses_previous_month = pending_expenses_previous_month[0]["total"] if pending_expenses_previous_month else 0
+    pending_expenses_trend = calculate_trend(pending_expenses_this_month, pending_expenses_previous_month)
+    pending_expenses = {
+        "amount": pending_expenses_this_month,
+        "trend": pending_expenses_trend["trend"],
+        "percentageChange": str(pending_expenses_trend["change"])
+    }
+    overdue_expenses_this_month = await db["expenseinvoices"].aggregate([
+        {"$match": {**query, "status": "overdue", "date": {"$gte": datetime.utcnow().replace(day=1, hour=0, minute=0, second=0)}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]).to_list(1)
+    overdue_expenses_previous_month = await db["expenseinvoices"].aggregate([
+        {"$match": {**query, "status": "overdue", "date": {"$gte": (datetime.utcnow().replace(day=1, hour=0, minute=0, second=0) - timedelta(days=30))}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]).to_list(1)
+    overdue_expenses_this_month = overdue_expenses_this_month[0]["total"] if overdue_expenses_this_month else 0
+    overdue_expenses_previous_month = overdue_expenses_previous_month[0]["total"] if overdue_expenses_previous_month else 0
+    overdue_expenses_trend = calculate_trend(overdue_expenses_this_month, overdue_expenses_previous_month)
+    overdue_expenses = {
+        "amount": overdue_expenses_this_month,
+        "trend": overdue_expenses_trend["trend"],
+        "percentageChange": str(overdue_expenses_trend["change"])
+    }
+    return {
+        "totalExpenses": total_expenses,
+        "paidExpenses": paid_expenses,
+        "pendingExpenses": pending_expenses,
+        "overdueExpenses": overdue_expenses
+    }
+    
 @app.post("/api/expenses", status_code=status.HTTP_201_CREATED)
 async def create_expense(expense: ExpenseInvoice, user=Depends(get_current_user)):
     expense_dict = expense.dict(exclude_unset=True)
