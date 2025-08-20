@@ -1320,12 +1320,14 @@ async def get_dashboard_metrics(dateFrom: Optional[date] = None, dateTo: Optiona
 @app.get("/api/dashboard/revenue-chart")
 async def get_revenue_chart(
     granularity: str = Query("monthly", enum=["daily", "weekly", "monthly"]),
-    dateFrom: date = date.today().replace(day=1, month=1),
-    dateTo: date = date.today(),
+    # FIX: Change type hints from 'date' to 'datetime' to match frontend data
+    dateFrom: datetime = Query(default_factory=lambda: datetime.now().replace(day=1, month=1)),
+    dateTo: datetime = Query(default_factory=datetime.now),
     user=Depends(get_current_user)
 ):
-    start_date = datetime.combine(dateFrom, datetime.min.time())
-    end_date = datetime.combine(dateTo, datetime.max.time())
+    # No need to use datetime.combine anymore as we receive full datetime objects
+    start_date = dateFrom
+    end_date = dateTo
     
     if granularity == "monthly":
         group_id = {"$dateToString": {"format": "%Y-%m", "date": "$date"}}
@@ -2331,22 +2333,31 @@ async def get_tax_collected_timeseries(from_: str = Query(None, alias="from"), t
     match = {}
     match["user"] = ObjectId(user["_id"])
     if from_ and to:
-        match["date"] = {"$gte": datetime.fromisoformat(from_), "$lte": datetime.fromisoformat(to)}
+        # FIX: Make date parsing robust by handling the 'Z' suffix
+        from_dt = datetime.fromisoformat(from_.replace('Z', '+00:00'))
+        to_dt = datetime.fromisoformat(to.replace('Z', '+00:00'))
+        match["date"] = {"$gte": from_dt, "$lte": to_dt}
+
     if interval == "month":
         group_id = {"$dateToString": {"format": "%Y-%m", "date": "$date"}}
     elif interval == "week":
         group_id = {"$dateToString": {"format": "%Y-%U", "date": "$date"}}
     else:
         group_id = {"$dateToString": {"format": "%Y-%m-%d", "date": "$date"}}
+    
     pipeline = [
         {"$match": match},
         {"$group": {"_id": group_id, "collected": {"$sum": {"$add": ["$cgst", "$sgst", "$igst"]}}}},
         {"$sort": {"_id": 1}}
     ]
     collected = await db["invoices"].aggregate(pipeline).to_list(None)
+    
     match_exp = {"userId": user["_id"]}
     if from_ and to:
-        match_exp["date"] = {"$gte": datetime.fromisoformat(from_), "$lte": datetime.fromisoformat(to)}
+        # FIX: Apply the same robust date parsing here
+        from_dt = datetime.fromisoformat(from_.replace('Z', '+00:00'))
+        to_dt = datetime.fromisoformat(to.replace('Z', '+00:00'))
+        match_exp["date"] = {"$gte": from_dt, "$lte": to_dt}
 
     pipeline_exp = [
         {"$match": match_exp},
@@ -2358,7 +2369,10 @@ async def get_tax_collected_timeseries(from_: str = Query(None, alias="from"), t
     series = []
     for c in collected:
         series.append({"date": c["_id"], "collected": c["collected"], "paid": paid_map.get(c["_id"], 0)})
+    
     return {"series": series}
+
+
 
 @app.get("/api/tax/summary/export")
 async def export_tax_summary(from_: str = Query(None, alias="from"), to: str = Query(None), groupBy: str = Query(None), user=Depends(get_current_user)):
