@@ -1711,10 +1711,12 @@ async def get_customer_pages(
 ):
     try:
         skip = (page - 1) * perPage
-        query = {"userId": user["_id"]}
+        query = {"userId": ObjectId(user["_id"])}
+        #print(f"Query: {query}, Page: {page}, PerPage: {perPage}, Skip: {skip}")
         total = await db["customers"].count_documents(query)
         total_pages = (total + perPage - 1) // perPage
         customers = await db["customers"].find(query).skip(skip).limit(perPage).to_list(perPage)
+        #print(customers)
         customers = [convert_objids(customer) for customer in customers]
         return {
             "customers": customers,
