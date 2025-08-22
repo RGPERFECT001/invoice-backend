@@ -2864,7 +2864,7 @@ async def get_profile(user=Depends(get_current_user)):
         "data": {
             "name": profile.get("name"),
             "email": profile.get("email"),
-            "phone": profile.get("phone"),
+            "phone": profile.get("phonenumber") if profile.get("phonenumber") else profile.get("phone"),
             "businessName": profile.get("company"),
             "address": profile.get("address"),
             "state": profile.get("state"),
