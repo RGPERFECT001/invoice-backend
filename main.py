@@ -1703,32 +1703,32 @@ async def add_customer(customer: CustomerCreateRequest, user=Depends(get_current
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding customer: {str(e)}")
 
-@app.get("/api/get_customer")
-async def get_customer_pages(
-    page: int = Query(1, alias="page"),
-    perPage: int = Query(10, alias="limit"),
-    user=Depends(get_current_user)
-):
-    try:
-        skip = (page - 1) * perPage
-        query = {"userId": ObjectId(user["_id"])}
-        #print(f"Query: {query}, Page: {page}, PerPage: {perPage}, Skip: {skip}")
-        total = await db["customers"].count_documents(query)
-        total_pages = (total + perPage - 1) // perPage
-        customers = await db["customers"].find(query).skip(skip).limit(perPage).to_list(perPage)
-        #print(customers)
-        customers = [convert_objids(customer) for customer in customers]
-        return {
-            "customers": customers,
-            "pagination": {
-                "total": total,
-                "perPage": perPage,
-                "currentPage": page,
-                "totalPages": total_pages
-            }
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid pagination parameters: {str(e)}")
+# @app.get("/api/get_customer")
+# async def get_customer_pages(
+#     page: int = Query(1, alias="page"),
+#     perPage: int = Query(10, alias="limit"),
+#     user=Depends(get_current_user)
+# ):
+#     try:
+#         skip = (page - 1) * perPage
+#         query = {"userId": ObjectId(user["_id"])}
+#         #print(f"Query: {query}, Page: {page}, PerPage: {perPage}, Skip: {skip}")
+#         total = await db["customers"].count_documents(query)
+#         total_pages = (total + perPage - 1) // perPage
+#         customers = await db["customers"].find(query).skip(skip).limit(perPage).to_list(perPage)
+#         #print(customers)
+#         customers = [convert_objids(customer) for customer in customers]
+#         return {
+#             "customers": customers,
+#             "pagination": {
+#                 "total": total,
+#                 "perPage": perPage,
+#                 "currentPage": page,
+#                 "totalPages": total_pages
+#             }
+#         }
+#     except ValueError as e:
+#         raise HTTPException(status_code=400, detail=f"Invalid pagination parameters: {str(e)}")
     
 @app.get("/api/pagination")
 async def get_pagination(user=Depends(get_current_user)):
@@ -2523,42 +2523,42 @@ async def send_otp_helper(phonenumber: str, otp: str, db, api_key: str):
     except Exception as err:
         raise HTTPException(status_code=500, detail={"message": "Internal server error", "error": str(err)})
 
-# @app.get("/api/get_customer")
-# async def get_customers(page: int = 1, limit: int = 10, user=Depends(get_current_user)):
-#     skip = (page - 1) * limit
-#     query = {"userId": ObjectId(user["_id"])}
-#     total_customers = await db.customers.count_documents(query)
-#     customers_cursor = db.customers.find(query).sort("createdAt", -1).skip(skip).limit(limit)
-#     customers = await customers_cursor.to_list(limit)
+@app.get("/api/get_customer")
+async def get_customers(page: int = 1, limit: int = 10, user=Depends(get_current_user)):
+    skip = (page - 1) * limit
+    query = {"userId": ObjectId(user["_id"])}
+    total_customers = await db.customers.count_documents(query)
+    customers_cursor = db.customers.find(query).sort("createdAt", -1).skip(skip).limit(limit)
+    customers = await customers_cursor.to_list(limit)
 
-#     response_data = []
-#     for customer in customers:
-#         response_data.append({
-#             "id": str(customer["_id"]),
-#             "company": {
-#                 "name": customer.get("companyName"),
-#                 "email": customer.get("email"),
-#                 "logo": customer.get("logo")
-#             },
-#             "customer": {
-#                 "name": customer.get("fullName"),
-#                 "avatar": customer.get("logo") or "/avatars/user_default.png"
-#             },
-#             "phone": customer.get("phone"),
-#             "status": customer.get("status", "Active"),
-#             "lastInvoice": customer.get("lastInvoice").strftime("%Y-%m-%d") if customer.get("lastInvoice") else None,
-#             "balance": customer.get('balance', 0.0)
-#         })
+    response_data = []
+    for customer in customers:
+        response_data.append({
+            "id": str(customer["_id"]),
+            "company": {
+                "name": customer.get("companyName"),
+                "email": customer.get("email"),
+                "logo": customer.get("logo")
+            },
+            "customer": {
+                "name": customer.get("fullName"),
+                "avatar": customer.get("logo") or "/avatars/user_default.png"
+            },
+            "phone": customer.get("phone"),
+            "status": customer.get("status", "Active"),
+            "lastInvoice": customer.get("lastInvoice").strftime("%Y-%m-%d") if customer.get("lastInvoice") else None,
+            "balance": customer.get('balance', 0.0)
+        })
     
-#     return {
-#         "data": response_data,
-#         "pagination": {
-#             "total": total_customers,
-#             "perPage": limit,
-#             "currentPage": page,
-#             "totalPages": (total_customers + limit - 1) // limit if limit > 0 else 0
-#         }
-#     }
+    return {
+        "data": response_data,
+        "pagination": {
+            "total": total_customers,
+            "perPage": limit,
+            "currentPage": page,
+            "totalPages": (total_customers + limit - 1) // limit if limit > 0 else 0
+        }
+    }
 
 @app.get("/api/expenses")
 async def get_expenses(user=Depends(get_current_user)):
@@ -2855,7 +2855,7 @@ async def get_profile(user=Depends(get_current_user)):
     profile = await db["users"].find_one({"_id": ObjectId(user["_id"])})
     if not profile:
         raise HTTPException(status_code=404, detail="User not found")
-    
+    logo = await db["logos"].find_one({"userId": ObjectId(user["_id"])})
     return {
         "success": True,
         "data": {
@@ -2868,10 +2868,35 @@ async def get_profile(user=Depends(get_current_user)):
             "website": profile.get("website"),
             "pan": profile.get("panNumber"),
             "gst": profile.get("gstNumber"),
+            "profilePic":logo.get("profilePic") if logo else profile.get("businessLogo"),
             "dateFormat": "DD/MM/YYYY",
             "logoUrl": profile.get("businessLogo"),
             "plan": "Premium"
         }
+    }
+
+@app.post("/api/profile/picture")
+async def upload_profile_picture(file: UploadFile = File(...), user=Depends(get_current_user)):
+    if not file.content_type:
+        raise HTTPException(status_code=400, detail="No file provided.")
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image files are allowed.")
+    
+    contents = await file.read()
+    profile_pic = {
+        "userId": ObjectId(user["_id"]),
+        "profilePic": contents
+    }
+    
+    await db["logos"].update_one(
+        {"userId": ObjectId(user["_id"])},
+        {"$set": profile_pic},
+        upsert=True
+    )
+    
+    return {
+        "success": True,
+        "message": "Profile picture uploaded successfully.",
     }
 
 @app.put("/api/profile")
@@ -2928,18 +2953,29 @@ async def upload_logo(file: UploadFile = File(...), user=Depends(get_current_use
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Only image files are allowed.")
     
-    file_path = f"/uploads/logos/{user['_id']}_{file.filename}"
+    contents = await file.read()
+    await db["logos"].update_one(
+        {"userId": ObjectId(user["_id"])},
+        {"$set": {"logo": contents}},
+        upsert=True
+    )
     
-    await db.users.update_one(
+    await db["users"].update_one(
         {"_id": ObjectId(user["_id"])},
-        {"$set": {"businessLogo": file_path}}
+        {"$set": {"businessLogo": f"/api/profile/logo/{user['_id']}"}} 
     )
     
     return {
         "success": True,
-        "message": "File uploaded successfully.",
-        "fileUrl": file_path
+        "message": "Logo uploaded successfully.",
     }
+    
+@app.get("/api/profile/logo/{user_id}")
+async def get_logo(user_id: str):
+    logo_doc = await db["logos"].find_one({"userId": ObjectId(user_id)})
+    if not logo_doc or "logo" not in logo_doc:
+        raise HTTPException(status_code=404, detail="Logo not found")
+    return Response(content=logo_doc["logo"], media_type="image/png")
 
 @app.put("/api/profile/theme")
 async def update_theme(data: dict = Body(...), user=Depends(get_current_user)):
