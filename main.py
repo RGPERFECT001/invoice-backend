@@ -2970,9 +2970,9 @@ async def upload_logo(file: UploadFile = File(...), user=Depends(get_current_use
         "message": "Logo uploaded successfully.",
     }
     
-@app.get("/api/profile/logo/{user_id}")
-async def get_logo(user_id: str):
-    logo_doc = await db["logos"].find_one({"userId": ObjectId(user_id)})
+@app.get("/api/profile/logo")
+async def get_logo(user=Depends(get_current_user)):
+    logo_doc = await db["logos"].find_one({"userId": ObjectId(user["_id"])})
     if not logo_doc or "logo" not in logo_doc:
         raise HTTPException(status_code=404, detail="Logo not found")
     return Response(content=logo_doc["logo"], media_type="image/png")
