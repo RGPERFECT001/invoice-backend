@@ -1200,70 +1200,101 @@ async def scan_invoice(file: UploadFile = File(...), user=Depends(get_current_us
     user_profile = await db["users"].find_one({"_id": ObjectId(user["_id"])})
     if not user_profile:
         raise HTTPException(status_code=404, detail="User profile not found")
-    
+
     user_profile_dict = convert_objids(user_profile)
     user_profile_dict.pop("password", None)
-    
+
     try:
         image_bytes = await file.read()
         image_b64 = base64.b64encode(image_bytes).decode()
-        
+
         enhanced_prompt = create_enhanced_invoice_prompt(user_profile_dict)
-        
+
         payload = {
             "contents": [{"parts": [{"text": enhanced_prompt}, {"inlineData": {"data": image_b64, "mimeType": file.content_type}}]}],
-            "generationConfig": {"temperature": 0.1, "topP": 0.8, "maxOutputTokens": 4096}
+            "generationConfig": {"temperature": 0.1, "topP": 0.8, "maxOutputTokens": 8192}
         }
-        
-        response = requests.post(GEMINI_API_URL, json=payload, timeout=30)
+
+        response = requests.post(GEMINI_API_URL, json=payload, timeout=90)
         if response.status_code != 200:
             raise HTTPException(status_code=500, detail=f"Gemini API error: {response.text}")
-        
+
         gemini_response = response.json()
-        extracted_text = gemini_response.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-        
+
+        if "candidates" not in gemini_response or not gemini_response["candidates"]:
+            prompt_feedback = gemini_response.get("promptFeedback", {})
+            error_detail = f"Gemini API returned no candidates. Feedback: {prompt_feedback}"
+            raise HTTPException(status_code=500, detail=error_detail)
+
+        candidate = gemini_response["candidates"][0]
+
+        if "content" not in candidate or "parts" not in candidate.get("content", {}):
+            finish_reason = candidate.get("finishReason", "UNKNOWN")
+            error_detail = f"Content generation failed or was blocked. Reason: {finish_reason}"
+            raise HTTPException(status_code=500, detail=error_detail)
+
+        extracted_text = candidate["content"]["parts"][0].get("text", "")
+
         if not extracted_text:
-            raise HTTPException(status_code=500, detail="No text extracted from invoice")
-        
-        invoice_type = "income"  
+            raise HTTPException(status_code=500, detail="No text extracted from invoice. The model may have failed to read the document.")
+
+        invoice_type = "income"
         if "EXPENSE" in extracted_text.upper() or "Invoice Type: EXPENSE" in extracted_text:
             invoice_type = "expense"
         elif "INCOME" in extracted_text.upper() or "Invoice Type: INCOME" in extracted_text:
             invoice_type = "income"
-        
+
         json_prompt = create_json_conversion_prompt(invoice_type)
         db_prompt = json_prompt + extracted_text
-        
+
         db_payload = {
             "contents": [{"parts": [{"text": db_prompt}]}],
-            "generationConfig": {"temperature": 0, "topP": 0.9, "maxOutputTokens": 2048}
+            "generationConfig": {"temperature": 0, "topP": 0.9, "maxOutputTokens": 4096}
         }
-        
-        db_response = requests.post(GEMINI_API_URL, json=db_payload, timeout=30)
+
+        db_response = requests.post(GEMINI_API_URL, json=db_payload, timeout=90)
         if db_response.status_code != 200:
             raise HTTPException(status_code=500, detail=f"Gemini JSON conversion error: {db_response.text}")
-        
+
         db_response_json = db_response.json()
         db_text = db_response_json.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+
+        json_text = ""
+        start_index = db_text.find('{')
+        end_index = db_text.rfind('}')
+
+        if start_index != -1 and end_index != -1 and end_index > start_index:
+            json_text = db_text[start_index:end_index+1]
+        else:
+            raise HTTPException(status_code=500, detail="Failed to find a valid JSON object in the AI's response.")
         
-        json_text = db_text.replace("```json", "").replace("```", "").strip()
-        
-        invoice_data = json.loads(json_text)
-        
+        try:
+            invoice_data = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=500, detail=f"Failed to parse JSON from AI response. Error: {e}. Raw text was: {json_text}")
+
         invoice_data["status"] = "draft"
-        detected_type = invoice_data.get("invoiceType", invoice_type)
         
+        detected_type = invoice_data.get("invoiceType", invoice_type)
+        newly_created_invoice = None
+
         if detected_type == "income":
             invoice_data["user"] = user["_id"]
             invoice_data.pop("invoiceType", None)
             result = await db["invoices"].insert_one(invoice_data)
+            newly_created_invoice = await db["invoices"].find_one({"_id": result.inserted_id})
         else:
             invoice_data["userId"] = user["_id"]
             invoice_data.pop("invoiceType", None)
             result = await db["expenseinvoices"].insert_one(invoice_data)
-        
-        return {"success": True, "message": f"{detected_type.title()} invoice saved.", "invoiceId": str(result.inserted_id), "invoiceType": detected_type}
-        
+            newly_created_invoice = await db["expenseinvoices"].find_one({"_id": result.inserted_id})
+
+        return {
+            "success": True, 
+            "message": f"{detected_type.title()} invoice saved.", 
+            "invoice": convert_objids(newly_created_invoice)
+        }
+
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Network error: {str(e)}")
     except Exception as e:
