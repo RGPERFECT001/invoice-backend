@@ -1249,7 +1249,7 @@ async def scan_invoice(file: UploadFile = File(...), user=Depends(get_current_us
 
         db_payload = {
             "contents": [{"parts": [{"text": db_prompt}]}],
-            "generationConfig": {"temperature": 0, "topP": 0.9, "maxOutputTokens": 4096}
+            "generationConfig": {"temperature": 0, "topP": 0.9, "maxOutputTokens": 8192}
         }
 
         db_response = requests.post(GEMINI_API_URL, json=db_payload, timeout=90)
