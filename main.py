@@ -126,26 +126,27 @@ class ExpenseInvoice(BaseModel):
     igst: Optional[float]
     total: Optional[float]
 
+
 class ExpenseStep1(BaseModel):
-    expenseNumber: str = Field(..., alias="expenseNumber")
-    expenseDate: datetime = Field(..., alias="expenseDate")
-    dueDate: Optional[datetime]
+    expenseNumber: str
+    expenseDate: datetime
+    dueDate: Optional[datetime] = None
     currency: Optional[str] = "INR"
     status: Optional[str] = "draft"
-    notes: Optional[str]
-    paymentMethod: Optional[str]
+    notes: Optional[str] = None
+    paymentMethod: Optional[str] = None
 
 class ExpenseStep2(BaseModel):
     vendorName: str
-    businessName: Optional[str]
+    businessName: Optional[str] = None
     billingAddress: str
-    shippingAddress: Optional[str]
-    email: Optional[str]
+    shippingAddress: Optional[str] = None
+    email: Optional[str] = None
 
 class ExpenseItemFromStep3(BaseModel):
     id: Union[int, str]
     name: str
-    hsn: Optional[str]
+    hsn: Optional[str] = None
     qty: int
     price: float
 
@@ -1109,15 +1110,17 @@ async def create_expense_from_steps(expense_data: NewExpenseFromSteps, user=Depe
                 "total": item_total,
             })
         
-        if step4.shipping and step4.shipping > 0:
+        shipping_cost = step4.shipping or 0
+        if shipping_cost > 0:
             transformed_items.append({
                 "description": "Shipping Charges",
                 "quantity": 1,
-                "price": step4.shipping,
-                "total": step4.shipping
+                "price": shipping_cost,
+                "total": shipping_cost
             })
 
-        total_after_discount = (subtotal + (step4.shipping or 0)) - (step4.discount or 0)
+        discount_amount = step4.discount or 0
+        total_after_discount = (subtotal + shipping_cost) - discount_amount
         final_total = total_after_discount + (step4.cgst or 0) + (step4.sgst or 0) + (step4.igst or 0)
         
         expense_doc = {
@@ -1139,11 +1142,11 @@ async def create_expense_from_steps(expense_data: NewExpenseFromSteps, user=Depe
             },
             "items": transformed_items,
             "subtotal": subtotal,
-            "discount": step4.discount,
-            "shipping": step4.shipping,
-            "cgst": step4.cgst,
-            "sgst": step4.sgst,
-            "igst": step4.igst,
+            "discount": discount_amount,
+            "shipping": shipping_cost,
+            "cgst": step4.cgst or 0,
+            "sgst": step4.sgst or 0,
+            "igst": step4.igst or 0,
             "total": final_total,
             "createdAt": datetime.utcnow()
         }
@@ -1155,7 +1158,7 @@ async def create_expense_from_steps(expense_data: NewExpenseFromSteps, user=Depe
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create expense: {str(e)}")
-
+    
 @app.post("/api/invoices/{invoice_id}/duplicate")
 async def duplicate_invoice(invoice_id: str, user=Depends(get_current_user)):
     invoice = await db["invoices"].find_one({"_id": ObjectId(invoice_id), "user": ObjectId(user["_id"])})
