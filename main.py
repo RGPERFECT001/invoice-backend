@@ -3042,6 +3042,123 @@ async def update_theme(data: dict = Body(...), user=Depends(get_current_user)):
     
     return {"success": True, "message": "Theme updated."}
 
+#Credit Note and Debit Note
+class CreditNoteCreate(BaseModel):
+    creditNoteNumber: str
+    creditNoteDate: datetime
+    againstInvoiceNumber: str
+    againstInvoiceDate: datetime
+    reason: str
+    customerName: str
+    bussinessName: Optional[str] = None
+    address: Optional[str] = None
+    contactNumber: Optional[str] = None
+    isGSTRegistered: Optional[bool] = False
+    GSTNumber: Optional[str] = None
+    items: List[InvoiceItem]
+    subtotal: float
+    CGST: float
+    SGST: float
+    IGST: float
+    total: float
+    termsAndConditions: Optional[str] = None
+    applyToNextInvoice: Optional[bool] = False
+    refund: Optional[bool] = False
+    uploadFile: Optional[str] = None
+    remarks: Optional[str] = None
+    
+class DebitNoteCreate(BaseModel):
+    debitNoteNumber: str
+    debitNoteDate: datetime
+    againstInvoiceNumber: str
+    againstInvoiceDate: datetime
+    reason: str
+    vendorName: str
+    bussinessName: Optional[str] = None
+    address: Optional[str] = None
+    contactNumber: Optional[str] = None
+    isGSTRegistered: Optional[bool] = False
+    GSTNumber: Optional[str] = None
+    items: List[InvoiceItem]
+    subtotal: float
+    CGST: float
+    SGST: float
+    IGST: float
+    total: float
+    termsAndConditions: Optional[str] = None
+    applyToNextInvoice: Optional[bool] = False
+    refund: Optional[bool] = False
+    uploadFile: Optional[str] = None
+    remarks: Optional[str] = None
+    
+@app.post("/api/credit-notes")
+async def create_credit_note(credit_note: CreditNoteCreate, user=Depends(get_current_user)):
+    credit_note_data = credit_note.model_dump()
+    credit_note_data["userId"] = ObjectId(user["_id"])
+    result = await db["creditnotes"].insert_one(credit_note_data)
+    created_note = await db["creditnotes"].find_one({"_id": result.inserted_id})
+    return {"success": True, "data": convert_objids(created_note)}
+
+@app.post("/api/debit-notes")
+async def create_debit_note(debit_note: DebitNoteCreate, user=Depends(get_current_user)):
+    debit_note_data = debit_note.model_dump()
+    debit_note_data["userId"] = ObjectId(user["_id"])
+    result = await db["debitnotes"].insert_one(debit_note_data)
+    created_note = await db["debitnotes"].find_one({"_id": result.inserted_id})
+    return {"success": True, "data": convert_objids(created_note)}
+
+@app.get("/api/credit-notes")
+async def get_credit_notes(page: int = 1, limit: int = 10, user=Depends(get_current_user)):
+    skip = (page - 1) * limit
+    query = {"userId": ObjectId(user["_id"])}
+    total_notes = await db["creditnotes"].count_documents(query)
+    notes_cursor = db["creditnotes"].find(query).skip(skip).limit(limit)
+    notes = await notes_cursor.to_list(limit)
+    return {
+        "data": [convert_objids(note) for note in notes],
+        "pagination": {
+            "total": total_notes,
+            "perPage": limit,
+            "currentPage": page,
+            "totalPages": (total_notes + limit - 1) // limit if limit > 0 else 0
+        }
+    }
+    
+@app.get("/api/debit-notes")
+async def get_debit_notes(page: int = 1, limit: int = 10, user=Depends(get_current_user)):
+    skip = (page - 1) * limit
+    query = {"userId": ObjectId(user["_id"])}
+    total_notes = await db["debitnotes"].count_documents(query)
+    notes_cursor = db["debitnotes"].find(query).skip(skip).limit(limit)
+    notes = await notes_cursor.to_list(limit)
+    return {
+        "data": [convert_objids(note) for note in notes],
+        "pagination": {
+            "total": total_notes,
+            "perPage": limit,
+            "currentPage": page,
+            "totalPages": (total_notes + limit - 1) // limit if limit > 0 else 0
+        }
+    }
+    
+@app.put("/api/credit-notes/{id}")
+async def update_credit_note(id: str, credit_note: CreditNoteCreate, user=Depends(get_current_user)):
+    credit_note_data = credit_note.model_dump()
+    credit_note_data["userId"] = ObjectId(user["_id"])
+    result = await db["creditnotes"].update_one({"_id": ObjectId(id)}, {"$set": credit_note_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Credit note not found")
+    return {"success": True, "message": "Credit note updated."}
+    
+@app.put("/api/debit-notes/{id}")
+async def update_debit_note(id: str, credit_note: DebitNoteCreate, user=Depends(get_current_user)):
+    debit_note_data = credit_note.model_dump()
+    debit_note_data["userId"] = ObjectId(user["_id"])
+    result = await db["debitnotes"].update_one({"_id": ObjectId(id)}, {"$set": debit_note_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Debit note not found")
+    return {"success": True, "message": "Debit note updated."}
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
