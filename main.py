@@ -1249,7 +1249,7 @@ async def scan_invoice(file: UploadFile = File(...), user=Depends(get_current_us
 
         db_payload = {
             "contents": [{"parts": [{"text": db_prompt}]}],
-            "generationConfig": {"temperature": 0, "topP": 0.9, "maxOutputTokens": 4096}
+            "generationConfig": {"temperature": 0, "topP": 0.9, "maxOutputTokens": 8192}
         }
 
         db_response = requests.post(GEMINI_API_URL, json=db_payload, timeout=90)
@@ -1787,6 +1787,7 @@ class UpdateInventoryItemBody(BaseModel):
     category: Optional[str] = None
     unitPrice: Optional[float] = Field(None, gt=0)
     inStock: Optional[int] = Field(None, ge=0)
+    HSN: Optional[str] = None
     discount: Optional[float] = Field(None, ge=0)
     image: Optional[str] = None
 
@@ -1807,6 +1808,7 @@ class CreateInventoryItemBody(BaseModel):
     category: Optional[str] = None
     unitPrice: float = Field(..., gt=0)
     inStock: int = Field(..., ge=0)
+    HSN: Optional[str] = None
     discount: Optional[float] = Field(None, ge=0)
     image: Optional[str] = None
     note: Optional[str] = None
@@ -1940,6 +1942,22 @@ async def update_inventory_item(item_id: str, item_update: UpdateInventoryItemBo
         "success": True,
         "data": process_inventory_item(updated_item)
     }
+    
+@app.get("/api/inventory/{name}")
+async def search_inventory_item_by_name(name: str, user=Depends(get_current_user)):
+    items = await db["inventory"].find({"productName": {"$regex": name, "$options": "i"}, "userId": user["_id"]}).to_list(None)
+    processed_items = [process_inventory_item(item) for item in items]
+    if not processed_items:
+        return {"success": False, "message": "No items found"}
+    return processed_items
+
+@app.get("/api/inventory/{code}")
+async def search_inventory_item_by_code(code: str, user=Depends(get_current_user)):
+    items = await db["inventory"].find({"HSN": {"$regex": code, "$options": "i"}, "userId": user["_id"]}).to_list(None)
+    processed_items = [process_inventory_item(item) for item in items]
+    if not processed_items:
+        return {"success": False, "message": "No items found"}
+    return processed_items
 
 @app.delete("/api/inventory/items/{item_id}")
 async def delete_inventory_item(item_id: str, user=Depends(get_current_user)):
