@@ -3158,6 +3158,109 @@ async def update_debit_note(id: str, credit_note: DebitNoteCreate, user=Depends(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Debit note not found")
     return {"success": True, "message": "Debit note updated."}
+
+#import and export credit and debit notes 
+@app.post("/api/credit-notes/import")
+async def import_credit_notes(file: UploadFile = File(...), user=Depends(get_current_user)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    if not file.filename.endswith(('.csv', '.xlsx')):
+        raise HTTPException(status_code=400, detail="Only CSV and Excel files are supported")
+    
+    contents = await file.read()
+    if file.filename.endswith('.csv'):
+        df = pd.read_csv(io.StringIO(contents.decode()))
+    else:
+        df = pd.read_excel(io.BytesIO(contents))
+    
+    imported_count = 0
+    for _, row in df.iterrows():
+        note_data = row.to_dict()
+        note_data['userId'] = ObjectId(user['_id']) 
+        if 'creditNoteDate' in note_data:
+             note_data['creditNoteDate'] = pd.to_datetime(note_data['creditNoteDate'])
+        if 'againstInvoiceDate' in note_data:
+             note_data['againstInvoiceDate'] = pd.to_datetime(note_data['againstInvoiceDate'])
+        await db["creditnotes"].insert_one(note_data)
+        imported_count += 1
+    
+    return {"success": True, "message": f"{imported_count} credit notes imported successfully"}
+
+@app.post("/api/debit-notes/import")
+async def import_debit_notes(file: UploadFile = File(...), user=Depends(get_current_user)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    if not file.filename.endswith(('.csv', '.xlsx')):
+        raise HTTPException(status_code=400, detail="Only CSV and Excel files are supported")
+    
+    contents = await file.read()
+    if file.filename.endswith('.csv'):
+        df = pd.read_csv(io.StringIO(contents.decode()))
+    else:
+        df = pd.read_excel(io.BytesIO(contents))
+    
+    imported_count = 0
+    for _, row in df.iterrows():
+        note_data = row.to_dict()
+        note_data['userId'] = ObjectId(user['_id']) 
+        if 'debitNoteDate' in note_data:
+             note_data['debitNoteDate'] = pd.to_datetime(note_data['debitNoteDate'])
+        if 'againstInvoiceDate' in note_data:
+             note_data['againstInvoiceDate'] = pd.to_datetime(note_data['againstInvoiceDate'])
+        await db["debitnotes"].insert_one(note_data)
+        imported_count += 1
+    
+    return {"success": True, "message": f"{imported_count} debit notes imported successfully"}
+
+@app.get("/api/credit-notes/export")
+async def export_credit_notes(format: str, user=Depends(get_current_user)):
+    notes = await db["creditnotes"].find({"userId": ObjectId(user["_id"])}).to_list(None) 
+    if not notes:
+        return Response(status_code=204)
+        
+    df = pd.DataFrame(notes)
+    df.drop(columns=['_id', 'userId'], inplace=True, errors='ignore')
+
+    if format == "csv":
+        output = io.StringIO()
+        df.to_csv(output, index=False)
+        return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=credit_notes.csv"})
+    elif format == "excel":
+        output = io.BytesIO()
+        df.to_excel(output, index=False, sheet_name='Credit Notes')
+        output.seek(0)
+        return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=credit_notes.xlsx"})
+    elif format == "pdf":
+        html = df.to_html(index=False)
+        pdf = pdfkit.from_string(html, False)
+        return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=credit_notes.pdf"})
+    else:
+        raise HTTPException(status_code=400, detail="Invalid format specified. Use 'csv', 'excel', or 'pdf'.")
+    
+@app.get("/api/debit-notes/export")
+async def export_debit_notes(format: str, user=Depends(get_current_user)):
+    notes = await db["debitnotes"].find({"userId": ObjectId(user["_id"])}).to_list(None) 
+    if not notes:
+        return Response(status_code=204)
+        
+    df = pd.DataFrame(notes)
+    df.drop(columns=['_id', 'userId'], inplace=True, errors='ignore')
+
+    if format == "csv":
+        output = io.StringIO()
+        df.to_csv(output, index=False)
+        return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=debit_notes.csv"})
+    elif format == "excel":
+        output = io.BytesIO()
+        df.to_excel(output, index=False, sheet_name='Debit Notes')
+        output.seek(0)
+        return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=debit_notes.xlsx"})
+    elif format == "pdf":
+        html = df.to_html(index=False)
+        pdf = pdfkit.from_string(html, False)
+        return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=debit_notes.pdf"})
+    else:
+        raise HTTPException(status_code=400, detail="Invalid format specified. Use 'csv', 'excel', or 'pdf'.")
     
 if __name__ == "__main__":
     import uvicorn
