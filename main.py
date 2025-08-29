@@ -1644,21 +1644,25 @@ async def login(data: dict):
         email = email.lower()
 
     user = await db["users"].find_one({"email": email})
-    hashed = user.get("password") if user else None
-    if not user or not hashed or not password or not pwd_context.verify(password, hashed):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    token = jwt.encode({"_id": str(user["_id"]), "email": user["email"]}, SECRET_KEY, algorithm="HS256")
-    
-    # response.set_cookie(
-    #     key="authToken",
-    #     value=token,
-    #     httponly=True,
-    #     secure=True,
-    #     samesite="none",
-    #     max_age=86400,
-    #     path="/"
-    # )
-    return {"token": token}
+    if user:
+        hashed = user.get("password")
+        if hashed and password and pwd_context.verify(password, hashed):
+            token = jwt.encode({"_id": str(user["_id"]), "email": user["email"]}, SECRET_KEY, algorithm="HS256")
+            return {"token": token}
+
+    team_member = await db["teammembers"].find_one({"email": email})
+    if team_member:
+        hashed = team_member.get("password")
+        if hashed and password and pwd_context.verify(password, hashed):
+            primary_user_id = team_member.get("userId")
+            if not primary_user_id:
+                raise HTTPException(status_code=500, detail="Team member is not linked to a primary user account.")
+            
+            token = jwt.encode({"_id": str(primary_user_id), "email": team_member["email"]}, SECRET_KEY, algorithm="HS256")
+            return {"token": token}
+            
+
+    raise HTTPException(status_code=401, detail="Invalid email or password")
 
 @app.post("/api/register")
 async def register(user: User):
@@ -1737,33 +1741,14 @@ async def add_customer(customer: CustomerCreateRequest, user=Depends(get_current
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding customer: {str(e)}")
 
-# @app.get("/api/get_customer")
-# async def get_customer_pages(
-#     page: int = Query(1, alias="page"),
-#     perPage: int = Query(10, alias="limit"),
-#     user=Depends(get_current_user)
-# ):
-#     try:
-#         skip = (page - 1) * perPage
-#         query = {"userId": ObjectId(user["_id"])}
-#         #print(f"Query: {query}, Page: {page}, PerPage: {perPage}, Skip: {skip}")
-#         total = await db["customers"].count_documents(query)
-#         total_pages = (total + perPage - 1) // perPage
-#         customers = await db["customers"].find(query).skip(skip).limit(perPage).to_list(perPage)
-#         #print(customers)
-#         customers = [convert_objids(customer) for customer in customers]
-#         return {
-#             "customers": customers,
-#             "pagination": {
-#                 "total": total,
-#                 "perPage": perPage,
-#                 "currentPage": page,
-#                 "totalPages": total_pages
-#             }
-#         }
-#     except ValueError as e:
-#         raise HTTPException(status_code=400, detail=f"Invalid pagination parameters: {str(e)}")
-    
+@app.get("/api/customers/search/{name}")
+async def customers_by_name(name: str ,user=Depends(get_current_user)):
+    query = {"userId": user["_id"]}
+    if name:
+        query["fullName"] = {"$regex": name, "$options": "i"}
+    customers = await db["customers"].find(query).sort("fullName", 1).to_list(20)
+    return {"customers": [convert_objids(cust) for cust in customers]}
+
 @app.get("/api/pagination")
 async def get_pagination(user=Depends(get_current_user)):
     try:
@@ -2777,9 +2762,12 @@ async def get_team_members(search: Optional[str] = None, page: int = 1, limit: i
         }
     }
 
-@app.post("/api/team-members") 
+@app.post("/aprs") 
 async def add_team_member(member_data: TeamMemberCreate, user=Depends(get_current_user)):
-    hashed_password = pwd_context.hash(member_data.credentials.password)
+    if member_data.credentials and member_data.credentials.password:
+        hashed_password = pwd_context.hash(member_data.credentials.password)
+    else:
+        hashed_password = pwd_context.hash(member_data.email)
     
     member_doc = {
         "name": member_data.name,
@@ -2791,7 +2779,6 @@ async def add_team_member(member_data: TeamMemberCreate, user=Depends(get_curren
         "userId": ObjectId(user["_id"]), 
         "lastActive": None,
         "avatar": f"/uploads/{member_data.name.split(' ')[0].lower()}.png",
-        "username": member_data.credentials.username,
         "password": hashed_password
     }
 
@@ -2811,8 +2798,7 @@ async def add_team_member(member_data: TeamMemberCreate, user=Depends(get_curren
             "dateJoined": date_joined_str,
             "lastActive": None,
             "status": member.get("status", "").capitalize(),
-            "avatar": member.get("avatar"),
-            "username": member.get("username")
+            "avatar": member.get("avatar")
         }
 
     return {
