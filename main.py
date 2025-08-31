@@ -1733,7 +1733,7 @@ async def add_customer(customer: CustomerCreateRequest, user=Depends(get_current
         customer_data['status'] = 'active'
         customer_data['balance'] = 0.0
         customer_data['lastInvoice'] = None
-        if not customer_data.get('companyName'):
+        if not customer_data.get('companyName') or customer_data['companyName'].strip() == "":
             customer_data['companyName'] = customer_data.get('fullName', "")
         result = await db["customers"].insert_one(customer_data)
         created_customer = await db["customers"].find_one({"_id": result.inserted_id})
