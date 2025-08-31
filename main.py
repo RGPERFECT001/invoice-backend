@@ -1743,10 +1743,13 @@ async def add_customer(customer: CustomerCreateRequest, user=Depends(get_current
 
 @app.get("/api/customers/search/{name}")
 async def customers_by_name(name: str ,user=Depends(get_current_user)):
-    query = {"userId": user["_id"]}
+    query = dict()
+    query["userId"] = ObjectId(user["_id"])
     if name:
-        query["fullName"] = {"$regex": name, "$options": "i"}
-    customers = await db["customers"].find(query).sort("fullName", 1).to_list(20)
+        query["companyName"] = {"$regex": name, "$options": "i"}
+    customers = await db["customers"].find(query).sort("companyName", 1).to_list(20)
+    if customers == []:
+        raise HTTPException(status_code=404, detail=f"No customers found for {name}")
     return {"customers": [convert_objids(cust) for cust in customers]}
 
 @app.get("/api/pagination")
@@ -2583,7 +2586,10 @@ async def get_customers(page: int = 1, limit: int = 10, user=Depends(get_current
             },
             "phone": customer.get("phone"),
             "status": customer.get("status", "Active"),
-            "lastInvoice": customer.get("lastInvoice").strftime("%Y-%m-%d") if customer.get("lastInvoice") else None,
+            "lastInvoice": (
+                customer.get("lastInvoice").strftime("%Y-%m-%d") if hasattr(customer.get("lastInvoice"), "strftime")
+                else str(customer.get("lastInvoice")) if customer.get("lastInvoice") is not None else None
+            ),
             "balance": customer.get('balance', 0.0)
         })
     
