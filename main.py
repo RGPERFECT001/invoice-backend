@@ -1746,8 +1746,8 @@ async def customers_by_name(name: str ,user=Depends(get_current_user)):
     query = dict()
     query["userId"] = ObjectId(user["_id"])
     if name:
-        query["companyName"] = {"$regex": name, "$options": "i"}
-    customers = await db["customers"].find(query).sort("companyName", 1).to_list(20)
+        query["fullName"] = {"$regex": name, "$options": "i"}
+    customers = await db["customers"].find(query).sort("fullName", 1).to_list(20)
     if customers == []:
         raise HTTPException(status_code=404, detail=f"No customers found for {name}")
     return {"customers": [convert_objids(cust) for cust in customers]}
@@ -2572,11 +2572,17 @@ async def get_customers(page: int = 1, limit: int = 10, user=Depends(get_current
     customers = await customers_cursor.to_list(limit)
 
     response_data = []
+    
     for customer in customers:
+        #fetch last invoice from invoices collection for each customer
+        last_invoice = await db.invoices.find_one(
+            {"user": ObjectId(user["_id"]), "billTo.name": customer.get("companyName")},
+            sort=[("date", -1)]
+        )
         response_data.append({
             "id": str(customer["_id"]),
             "company": {
-                "name": customer.get("companyName"),
+                "name": customer.get("companyName") if customer.get("companyName") else customer.get("fullName"),
                 "email": customer.get("email"),
                 "logo": customer.get("logo")
             },
@@ -2586,10 +2592,10 @@ async def get_customers(page: int = 1, limit: int = 10, user=Depends(get_current
             },
             "phone": customer.get("phone"),
             "status": customer.get("status", "Active"),
-            "lastInvoice": (
-                customer.get("lastInvoice").strftime("%Y-%m-%d") if hasattr(customer.get("lastInvoice"), "strftime")
-                else str(customer.get("lastInvoice")) if customer.get("lastInvoice") is not None else None
-            ),
+            #last invoice might be None or a date object
+            #objectid needs to be converted to string
+            
+            "lastInvoice": last_invoice.get("date").strftime("%d %B %Y") if last_invoice and last_invoice.get("date") else None,
             "balance": customer.get('balance', 0.0)
         })
     
