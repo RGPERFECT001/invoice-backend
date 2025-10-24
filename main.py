@@ -354,7 +354,7 @@ async def get_current_user(request: Request):
         raise HTTPException(status_code=401, detail="Invalid token")
 
 GEMINI_API_KEY = str(os.getenv("GEMINI_API_KEY"))
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_API_KEY
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + GEMINI_API_KEY
 
 def create_enhanced_invoice_prompt(user_profile):
     user_company = user_profile.get("company", "")
@@ -1391,7 +1391,7 @@ async def get_revenue_chart(
     data = await db["invoices"].aggregate(pipeline).to_list(None)
     return {"data": data}
 
-@app.get("hboard/cash-flow")
+@app.get("/api/dashboard/cash-flow")
 async def get_cash_flow(asOfDate: date = Query(None, alias="date"), user=Depends(get_current_user)):
     if asOfDate is None:
         asOfDate = date.today()
@@ -1733,7 +1733,7 @@ async def add_customer(customer: CustomerCreateRequest, user=Depends(get_current
         customer_data['status'] = 'active'
         customer_data['balance'] = 0.0
         customer_data['lastInvoice'] = None
-        if not customer_data.get('companyName') or customer_data['companyName'].strip() == "":
+        if not customer_data.get('companyName'):
             customer_data['companyName'] = customer_data.get('fullName', "")
         result = await db["customers"].insert_one(customer_data)
         created_customer = await db["customers"].find_one({"_id": result.inserted_id})
@@ -1746,8 +1746,8 @@ async def customers_by_name(name: str ,user=Depends(get_current_user)):
     query = dict()
     query["userId"] = ObjectId(user["_id"])
     if name:
-        query["fullName"] = {"$regex": name, "$options": "i"}
-    customers = await db["customers"].find(query).sort("fullName", 1).to_list(20)
+        query["companyName"] = {"$regex": name, "$options": "i"}
+    customers = await db["customers"].find(query).sort("companyName", 1).to_list(20)
     if customers == []:
         raise HTTPException(status_code=404, detail=f"No customers found for {name}")
     return {"customers": [convert_objids(cust) for cust in customers]}
@@ -1835,8 +1835,7 @@ async def get_inventory_items(
     sortOrder: str = "asc",
     user=Depends(get_current_user)
 ):
-    query = {}
-    query["userId"]= user["_id"]
+    query = {"userId": user["_id"]}
 
     if search:
         query["productName"] = {"$regex": search, "$options": "i"}
@@ -1884,7 +1883,7 @@ async def create_inventory_item(item_data: CreateInventoryItemBody, user=Depends
     if "id" not in item_doc or not item_doc["id"]:
         item_doc["id"] = str(ObjectId())
 
-    existing_item = await db["inventory"].find_one({"id": item_doc["id"], "userId": ObjectId(user["_id"])})
+    existing_item = await db["inventory"].find_one({"id": item_doc["id"], "userId": user["_id"]})
     if existing_item:
         raise HTTPException(status_code=409, detail=f"Inventory item with id {item_doc['id']} already exists.")
         
@@ -1901,7 +1900,7 @@ async def create_inventory_item(item_data: CreateInventoryItemBody, user=Depends
 
 @app.get("/api/inventory/items/{item_id}")
 async def get_inventory_item(item_id: str, user=Depends(get_current_user)):
-    item = await db["inventory"].find_one({"id": item_id, "userId": ObjectId(user["_id"])})
+    item = await db["inventory"].find_one({"id": item_id, "userId": user["_id"]})
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     
@@ -1934,7 +1933,7 @@ async def update_inventory_item(item_id: str, item_update: UpdateInventoryItemBo
     
 @app.get("/api/inventory/{name}")
 async def search_inventory_item_by_name(name: str, user=Depends(get_current_user)):
-    items = await db["inventory"].find({"productName": {"$regex": name, "$options": "i"}, "userId": ObjectId(user["_id"])}).to_list(None)
+    items = await db["inventory"].find({"productName": {"$regex": name, "$options": "i"}, "userId": user["_id"]}).to_list(None)
     processed_items = [process_inventory_item(item) for item in items]
     if not processed_items:
         return {"success": False, "message": "No items found"}
@@ -1942,7 +1941,7 @@ async def search_inventory_item_by_name(name: str, user=Depends(get_current_user
 
 @app.get("/api/inventory/{code}")
 async def search_inventory_item_by_code(code: str, user=Depends(get_current_user)):
-    items = await db["inventory"].find({"HSN": {"$regex": code, "$options": "i"}, "userId": ObjectId(user["_id"])}).to_list(None)
+    items = await db["inventory"].find({"HSN": {"$regex": code, "$options": "i"}, "userId": user["_id"]}).to_list(None)
     processed_items = [process_inventory_item(item) for item in items]
     if not processed_items:
         return {"success": False, "message": "No items found"}
@@ -1958,7 +1957,7 @@ async def delete_inventory_item(item_id: str, user=Depends(get_current_user)):
 @app.get("/api/inventory/summary")
 async def get_inventory_summary(user=Depends(get_current_user)):
     try:
-        query = {"userId": ObjectId(user["_id"])}
+        query = {"userId": user["_id"]}
         
         all_products = await db["inventory"].count_documents(query)
         if all_products == 0:
@@ -2046,8 +2045,7 @@ async def export_inventory(
     status: Optional[str] = None,
     user=Depends(get_current_user)
 ):
-    query = {}
-    query["userId"]= ObjectId(user["_id"])
+    query = {"userId": user["_id"]}
     if search:
         query["productName"] = {"$regex": search, "$options": "i"}
     if category:
@@ -2110,7 +2108,7 @@ async def import_inventory(file: UploadFile = File(...), user=Depends(get_curren
         errors = []
 
         for record in items:
-            record["userId"] = ObjectId(user["_id"])
+            record["userId"] = user["_id"]
             if "id" not in record or pd.isna(record["id"]):
                  record["id"] = str(ObjectId())
 
@@ -2139,7 +2137,7 @@ async def import_inventory(file: UploadFile = File(...), user=Depends(get_curren
 @app.get("/api/inventory/categories")
 async def get_inventory_categories(user=Depends(get_current_user)):
     try:
-        categories = await db["inventory"].distinct("category", {"userId": ObjectId(user["_id"]), "category": {"$ne": None}})
+        categories = await db["inventory"].distinct("category", {"userId": user["_id"], "category": {"$ne": None}})
         return {"success": True, "data": categories}
     except Exception as e: 
         raise HTTPException(status_code=500, detail=f"Error fetching inventory categories: {str(e)}")
@@ -2574,37 +2572,11 @@ async def get_customers(page: int = 1, limit: int = 10, user=Depends(get_current
     customers = await customers_cursor.to_list(limit)
 
     response_data = []
-    
     for customer in customers:
-        #fetch last invoice from invoices collection for each customer
-        last_invoice = await db["invoices"].find_one(
-            {"user": ObjectId(user["_id"]), "billTo.name": customer.get("fullName")},
-            sort=[("date", -1)]
-        )
-        #outstanding if status is not paid
-        outstanding_balance = await db["invoices"].aggregate([
-            {"$match": {"user": ObjectId(user["_id"]), "billTo.name": customer.get("fullName"), "status": {"$ne": "Paid"}}},
-            {"$group": {"_id": None, "totalBalance": {"$sum": "$total"}}}
-        ]).to_list(1)
-        #print( outstanding_balance)
-        outstanding_balance = outstanding_balance[0]["totalBalance"] if outstanding_balance else 0
-        #add credit note and debit note adjustments to outstanding balance
-        credit_notes = await db["creditnotes"].aggregate([
-            {"$match": {"user": ObjectId(user["_id"]), "billTo.name": customer.get("fullName"), "refund" : False}},
-            {"$group": {"_id": None, "totalCredit": {"$sum": "$total"}}}
-        ]).to_list(1)
-        credit_notes = credit_notes[0]["totalCredit"] if credit_notes else 0
-        debit_notes = await db["debitnotes"].aggregate([
-            {"$match": {"user": ObjectId(user["_id"]), "billTo.name": customer.get("fullName"), "refund" : False}},
-            {"$group": {"_id": None, "totalDebit": {"$sum": "$total"}}}
-        ]).to_list(1)
-        debit_notes = debit_notes[0]["totalDebit"] if debit_notes else 0
-        outstanding_balance += credit_notes - debit_notes
-        
         response_data.append({
             "id": str(customer["_id"]),
             "company": {
-                "name": customer.get("companyName") if customer.get("companyName") else customer.get("fullName"),
+                "name": customer.get("companyName"),
                 "email": customer.get("email"),
                 "logo": customer.get("logo")
             },
@@ -2614,11 +2586,11 @@ async def get_customers(page: int = 1, limit: int = 10, user=Depends(get_current
             },
             "phone": customer.get("phone"),
             "status": customer.get("status", "Active"),
-            #last invoice might be None or a date object
-            #objectid needs to be converted to string
-            
-            "lastInvoice": last_invoice.get("date").strftime("%d %B %Y") if last_invoice and last_invoice.get("date") else None,
-            "balance": outstanding_balance
+            "lastInvoice": (
+                customer.get("lastInvoice").strftime("%Y-%m-%d") if hasattr(customer.get("lastInvoice"), "strftime")
+                else str(customer.get("lastInvoice")) if customer.get("lastInvoice") is not None else None
+            ),
+            "balance": customer.get('balance', 0.0)
         })
     
     return {
@@ -3161,28 +3133,6 @@ async def get_debit_notes(page: int = 1, limit: int = 10, user=Depends(get_curre
         }
     }
     
-@app.get("/api/credit-notes/{id}")
-async def get_credit_note(id: str, user=Depends(get_current_user)):
-    try:
-        obj_id = ObjectId(id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid credit note ID format")
-    note = await db["creditnotes"].find_one({"_id": obj_id, "userId": ObjectId(user["_id"])}) 
-    if not note:
-        raise HTTPException(status_code=404, detail="Credit note not found")
-    return {"success": True, "data": convert_objids(note)}
-
-@app.get("/api/debit-notes/{id}")
-async def get_debit_note(id: str, user=Depends(get_current_user)):
-    try:
-        obj_id = ObjectId(id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid debit note ID format")
-    note = await db["debitnotes"].find_one({"_id": obj_id, "userId": ObjectId(user["_id"])}) 
-    if not note:
-        raise HTTPException(status_code=404, detail="Debit note not found")
-    return {"success": True, "data": convert_objids(note)}
-    
 @app.put("/api/credit-notes/{id}")
 async def update_credit_note(id: str, credit_note: CreditNoteCreate, user=Depends(get_current_user)):
     credit_note_data = credit_note.model_dump()
@@ -3253,28 +3203,6 @@ async def import_debit_notes(file: UploadFile = File(...), user=Depends(get_curr
         imported_count += 1
     
     return {"success": True, "message": f"{imported_count} debit notes imported successfully"}
-
-@app.delete("/api/credit-notes/{id}")
-async def delete_credit_note(id: str, user=Depends(get_current_user)):
-    try:
-        obj_id = ObjectId(id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid credit note ID format")
-    result = await db["creditnotes"].delete_one({"_id": obj_id, "userId": ObjectId(user["_id"])}) 
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Credit note not found")
-    return {"success": True, "message": "Credit note deleted successfully"}
-
-@app.delete("/api/debit-notes/{id}")
-async def delete_debit_note(id: str, user=Depends(get_current_user)):
-    try:
-        obj_id = ObjectId(id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid debit note ID format")
-    result = await db["debitnotes"].delete_one({"_id": obj_id, "userId": ObjectId(user["_id"])}) 
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Debit note not found")
-    return {"success": True, "message": "Debit note deleted successfully"}
 
 @app.get("/api/credit-notes/export")
 async def export_credit_notes(format: str, user=Depends(get_current_user)):
